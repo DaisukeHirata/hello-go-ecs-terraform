@@ -30,7 +30,7 @@ write up.
   cd $GOPATH/src/grisha/hello-go-ecs-terraform
   ```
 
-1. Edit `tf/variables.tf` file so that it has the following:
+1. Edit `tf/main.tf` file so that it has the following:
 
   ```
   variable "key_name" { default = "YOUR-AWS-KEY-PAIR-NAME" }

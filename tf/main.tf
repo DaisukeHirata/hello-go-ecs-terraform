@@ -1,12 +1,11 @@
-
 variable "environ" {default = "UNKNOWN" }
 variable "appname" {default = "HelloGoEcsTerraform" }
 variable "host_port" { default = 8080 }
 variable "docker_port" { default = 8080 }
 variable "lb_port" { default = 80 }
-variable "aws_region" { default = "us-east-1" }
-variable "key_name" {}
-variable "dockerimg" {}
+variable "aws_region" { default = "ap-northeast-1" }
+variable "key_name" { default = "YOUR-AWS-KEY-PAIR-NAME" }
+variable "dockerimg" { default = "DOCKER_HUB_NAME/IMAGE_NAME" }
 
 # From https://github.com/aws/amazon-ecs-cli/blob/d566823dc716a83cf97bf93490f6e5c3c757a98a/ecs-cli/modules/config/ami/ami.go#L31
 variable "ami" {
@@ -28,11 +27,11 @@ provider "aws" {
 }
 
 module "vpc" {
-  source = "github.com/terraform-community-modules/tf_aws_vpc"
+  source = "github.com/terraform-aws-modules/terraform-aws-vpc"
   name = "${var.appname}-${var.environ}-vpc"
   cidr = "10.100.0.0/16"
-  public_subnets  = "10.100.101.0/24,10.100.102.0/24"
-  azs = "us-east-1c,us-east-1b"
+  public_subnets = ["10.100.101.0/24", "10.100.102.0/24"]
+  azs = ["ap-northeast-1a", "ap-northeast-1c"]
 }
 
 resource "aws_security_group" "allow_all_outbound" {
@@ -175,7 +174,7 @@ resource "aws_ecs_task_definition" "ecs_task" {
 
 resource "aws_elb" "service_elb" {
   name = "${var.appname}-${var.environ}"
-  subnets = ["${split(",", module.vpc.public_subnets)}"]
+  subnets = ["${element(module.vpc.public_subnets, 0)}", "${element(module.vpc.public_subnets, 1)}"]
   connection_draining = true
   cross_zone_load_balancing = true
   security_groups = [
@@ -216,13 +215,6 @@ resource "aws_ecs_service" "ecs_service" {
   }
 }
 
-resource "template_file" "user_data" {
-  template = "ec2_user_data.tmpl"
-  vars {
-    cluster_name = "${var.appname}_${var.environ}"
-  }
-}
-
 resource "aws_iam_instance_profile" "ecs" {
   name = "${var.appname}_${var.environ}"
   roles = ["${aws_iam_role.ecs.name}"]
@@ -239,13 +231,13 @@ resource "aws_launch_configuration" "ecs_cluster" {
     "${aws_security_group.allow_all_outbound.id}",
     "${aws_security_group.allow_cluster.id}",
   ]
-  user_data = "${template_file.user_data.rendered}"
+  user_data = "${file("userdata.sh")}"
   key_name = "${var.key_name}"
 }
 
 resource "aws_autoscaling_group" "ecs_cluster" {
   name = "${var.appname}_${var.environ}"
-  vpc_zone_identifier = ["${split(",", module.vpc.public_subnets)}"]
+  vpc_zone_identifier = ["${element(module.vpc.public_subnets, 0)}", "${element(module.vpc.public_subnets, 1)}"]
   min_size = 0
   max_size = 3
   desired_capacity = 3
