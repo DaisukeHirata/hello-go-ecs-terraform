@@ -13,6 +13,7 @@ import (
 )
 
 func hello(w http.ResponseWriter, r *http.Request, listenSpec string, start string, hostname string) {
+	fmt.Printf("Real Hello world! %s\n", time.Now().String())
 	fmt.Fprintf(w, "Real Hello world!\n"+
 		"Listening on: %s\n"+
 		"Started on: %s\n"+

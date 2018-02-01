@@ -1,11 +1,14 @@
-variable "environ" {default = "UNKNOWN" }
-variable "appname" {default = "HelloGoEcsTerraform" }
+variable "environ" {default = "dh" }
+variable "appname" {default = "app" }
 variable "host_port" { default = 8080 }
 variable "docker_port" { default = 8080 }
+variable "nginx_host_port" { default = 80 }
+variable "nginx_docker_port" { default = 80 }
 variable "lb_port" { default = 80 }
 variable "aws_region" { default = "ap-northeast-1" }
 variable "key_name" { default = "YOUR-AWS-KEY-PAIR-NAME" }
 variable "dockerimg" { default = "DOCKER_HUB_NAME/IMAGE_NAME" }
+variable "nginx-dockerimg" { default = "DOCKER_HUB_NAME/IMAGE_NAME" }
 
 # From https://github.com/aws/amazon-ecs-cli/blob/d566823dc716a83cf97bf93490f6e5c3c757a98a/ecs-cli/modules/config/ami/ami.go#L31
 variable "ami" {
@@ -162,6 +165,10 @@ resource "template_file" "task_definition" {
     image = "${var.dockerimg}"
     docker_port = "${var.docker_port}"
     host_port = "${var.host_port}"
+    nginx_name = "${var.appname}_nginx_${var.environ}"
+    nginx_image = "${var.nginx-dockerimg}"
+    nginx_docker_port = "${var.nginx_docker_port}"
+    nginx_host_port = "${var.nginx_host_port}"
     # this is so that task is always deployed when the image changes
     _img_id = "${null_resource.docker.id}"
   }
@@ -169,6 +176,7 @@ resource "template_file" "task_definition" {
 
 resource "aws_ecs_task_definition" "ecs_task" {
   family = "${var.appname}_${var.environ}"
+  network_mode = "bridge"
   container_definitions = "${template_file.task_definition.rendered}"
 }
 
@@ -184,7 +192,7 @@ resource "aws_elb" "service_elb" {
   ]
 
   listener {
-    instance_port = "${var.host_port}"
+    instance_port = "${var.nginx_host_port}"
     instance_protocol = "http"
     lb_port = "${var.lb_port}"
     lb_protocol = "http"
@@ -193,7 +201,7 @@ resource "aws_elb" "service_elb" {
   health_check {
     healthy_threshold = 2
     unhealthy_threshold = 10
-    target = "HTTP:${var.host_port}/"
+    target = "HTTP:${var.nginx_host_port}/"
     interval = 5
     timeout = 4
   }
@@ -210,14 +218,14 @@ resource "aws_ecs_service" "ecs_service" {
 
   load_balancer {
     elb_name = "${aws_elb.service_elb.id}"
-    container_name = "${var.appname}_${var.environ}"
-    container_port = "${var.docker_port}"
+    container_name = "${var.appname}_nginx_${var.environ}"
+    container_port = "${var.nginx_docker_port}"
   }
 }
 
 resource "aws_iam_instance_profile" "ecs" {
   name = "${var.appname}_${var.environ}"
-  roles = ["${aws_iam_role.ecs.name}"]
+  role = "${aws_iam_role.ecs.name}"
 }
 
 resource "aws_launch_configuration" "ecs_cluster" {
@@ -251,6 +259,14 @@ resource "null_resource" "docker" {
     log_hash = "${base64sha256(file("${path.module}/../.git/logs/HEAD"))}"
   }
   provisioner "local-exec" {
-    command = "cd .. && docker build -t ${var.dockerimg} . && docker push ${var.dockerimg}"
+    command = "cd .. && docker build -t ${var.dockerimg} . && docker push ${var.dockerimg} && docker build . -f ./Dockerfile.nginx -t ${var.nginx-dockerimg} && docker push ${var.nginx-dockerimg}"
   }
+}
+
+resource "aws_cloudwatch_log_group" "fr-app-log" {
+  name = "fr-app-log"
+}
+
+resource "aws_cloudwatch_log_group" "fr-nginx-log" {
+  name = "fr-nginx-log"
 }
