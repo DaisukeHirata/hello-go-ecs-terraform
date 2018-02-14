@@ -1,4 +1,9 @@
 tf/variables.tf
+tf/.terraform/
+tf/terraform.tfstate
+tf/terraform.tfstate.backup
+tf/dh.tfstate
+tf/dh.tfstate.backup
 
 # Compiled Object files, Static and Dynamic libs (Shared Objects)
 *.o

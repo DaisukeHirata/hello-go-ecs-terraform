@@ -126,8 +126,8 @@ resource "aws_iam_policy_attachment" "ecs_for_ec2" {
 }
 
 # This is the role for the load balancer to have access to ECS.
-resource "aws_iam_role" "ecs_elb" {
-  name = "${var.appname}_ecs_elb_${var.environ}"
+resource "aws_iam_role" "ecs_alb" {
+  name = "${var.appname}_ecs_alb_${var.environ}"
   assume_role_policy = <<EOF
 {
     "Version": "2012-10-17",
@@ -146,9 +146,9 @@ resource "aws_iam_role" "ecs_elb" {
 }
 
 # Attachment for the above IAM role.
-resource "aws_iam_policy_attachment" "ecs_elb" {
-  name = "${var.appname}_ecs_elb_${var.environ}"
-  roles = ["${aws_iam_role.ecs_elb.id}"]
+resource "aws_iam_policy_attachment" "ecs_alb" {
+  name = "${var.appname}_ecs_alb_${var.environ}"
+  roles = ["${aws_iam_role.ecs_alb.id}"]
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole"
 }
 
@@ -159,16 +159,26 @@ resource "aws_ecs_cluster" "cluster" {
 
 resource "template_file" "task_definition" {
   depends_on = ["null_resource.docker"]
-  template = "${file("task-definition.json.tmpl")}"
+  template = "${file("task-definition-nginx.json.tmpl")}"
+  vars {
+    nginx_name = "${var.appname}_nginx_${var.environ}"
+    nginx_image = "${var.nginx-dockerimg}"
+    nginx_docker_port = "${var.nginx_docker_port}"
+    nginx_host_port = "${var.nginx_host_port}"
+    internal_alb_host = "${aws_alb.service_alb_go.dns_name}"
+    # this is so that task is always deployed when the image changes
+    _img_id = "${null_resource.docker.id}"
+  }
+}
+
+resource "template_file" "task_definition_go" {
+  depends_on = ["null_resource.docker"]
+  template = "${file("task-definition-go.json.tmpl")}"
   vars {
     name = "${var.appname}_${var.environ}"
     image = "${var.dockerimg}"
     docker_port = "${var.docker_port}"
     host_port = "${var.host_port}"
-    nginx_name = "${var.appname}_nginx_${var.environ}"
-    nginx_image = "${var.nginx-dockerimg}"
-    nginx_docker_port = "${var.nginx_docker_port}"
-    nginx_host_port = "${var.nginx_host_port}"
     # this is so that task is always deployed when the image changes
     _img_id = "${null_resource.docker.id}"
   }
@@ -180,30 +190,127 @@ resource "aws_ecs_task_definition" "ecs_task" {
   container_definitions = "${template_file.task_definition.rendered}"
 }
 
-resource "aws_elb" "service_elb" {
+resource "aws_ecs_task_definition" "ecs_task_go" {
+  family = "${var.appname}_${var.environ}"
+  network_mode = "bridge"
+  container_definitions = "${template_file.task_definition_go.rendered}"
+}
+
+resource "aws_alb" "service_alb" {
   name = "${var.appname}-${var.environ}"
-  subnets = ["${element(module.vpc.public_subnets, 0)}", "${element(module.vpc.public_subnets, 1)}"]
-  connection_draining = true
-  cross_zone_load_balancing = true
+
+  subnets = [
+    "${element(module.vpc.public_subnets, 0)}", 
+    "${element(module.vpc.public_subnets, 1)}"
+  ]
+
   security_groups = [
     "${aws_security_group.allow_cluster.id}",
     "${aws_security_group.allow_all_inbound.id}",
     "${aws_security_group.allow_all_outbound.id}"
   ]
 
-  listener {
-    instance_port = "${var.nginx_host_port}"
-    instance_protocol = "http"
-    lb_port = "${var.lb_port}"
-    lb_protocol = "http"
+  internal                   = false
+  enable_deletion_protection = false
+
+  tags {
+    Name        = "${var.appname}-${var.environ}"
+    Environment = "Development"
+    Type        = "ALB"
   }
+}
+
+resource "aws_alb" "service_alb_go" {
+  name = "${var.appname}-${var.environ}-go"
+
+  subnets = [
+    "${element(module.vpc.public_subnets, 0)}", 
+    "${element(module.vpc.public_subnets, 1)}"
+  ]
+
+  security_groups = [
+    "${aws_security_group.allow_cluster.id}",
+    "${aws_security_group.allow_all_inbound.id}",
+    "${aws_security_group.allow_all_outbound.id}"
+  ]
+
+  internal                   = true
+  enable_deletion_protection = false
+
+  tags {
+    Name        = "${var.appname}-${var.environ}-go"
+    Environment = "Development"
+    Type        = "ALB"
+  }
+}
+
+resource "aws_alb_target_group" "service_alb" {
+  name                 = "${var.appname}-${var.environ}"
+  port                 = 80
+  protocol             = "HTTP"
+  vpc_id               = "${module.vpc.vpc_id}"
+  deregistration_delay = 30
 
   health_check {
-    healthy_threshold = 2
-    unhealthy_threshold = 10
-    target = "HTTP:${var.nginx_host_port}/"
-    interval = 5
-    timeout = 4
+    interval            = 30
+    path                = "/alive"
+    protocol            = "HTTP"
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 4
+    matcher             = 200
+  }
+
+  tags {
+    Name        = "${var.appname}-${var.environ}"
+    Environment = "Development"
+    Type        = "ALB"
+  }
+}
+
+resource "aws_alb_target_group" "service_alb_go" {
+  name                 = "${var.appname}-${var.environ}-go"
+  port                 = 8080
+  protocol             = "HTTP"
+  vpc_id               = "${module.vpc.vpc_id}"
+  deregistration_delay = 30
+
+  health_check {
+    interval            = 30
+    path                = "/alive"
+    protocol            = "HTTP"
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 4
+    matcher             = 200
+  }
+
+  tags {
+    Name        = "${var.appname}-${var.environ}-go"
+    Environment = "Development"
+    Type        = "ALB"
+  }
+}
+
+resource "aws_alb_listener" "service_alb" {
+  load_balancer_arn = "${aws_alb.service_alb.arn}"
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    target_group_arn = "${aws_alb_target_group.service_alb.arn}"
+    type             = "forward"
+  }
+}
+
+resource "aws_alb_listener" "service_alb_go" {
+  load_balancer_arn = "${aws_alb.service_alb_go.arn}"
+  port              = "8080"
+  protocol          = "HTTP"
+
+  default_action {
+    target_group_arn = "${aws_alb_target_group.service_alb_go.arn}"
+    type             = "forward"
   }
 }
 
@@ -212,14 +319,30 @@ resource "aws_ecs_service" "ecs_service" {
   cluster = "${aws_ecs_cluster.cluster.id}"
   task_definition = "${aws_ecs_task_definition.ecs_task.arn}"
   desired_count = 3
-  iam_role = "${aws_iam_role.ecs_elb.arn}"
-  depends_on = ["aws_iam_policy_attachment.ecs_elb"]
+  iam_role = "${aws_iam_role.ecs_alb.arn}"
+  depends_on = ["aws_iam_policy_attachment.ecs_alb"]
   deployment_minimum_healthy_percent = 50
 
   load_balancer {
-    elb_name = "${aws_elb.service_elb.id}"
+    target_group_arn = "${aws_alb_target_group.service_alb.arn}"
     container_name = "${var.appname}_nginx_${var.environ}"
     container_port = "${var.nginx_docker_port}"
+  }
+}
+
+resource "aws_ecs_service" "ecs_service_go" {
+  name = "${var.appname}_${var.environ}_go"
+  cluster = "${aws_ecs_cluster.cluster.id}"
+  task_definition = "${aws_ecs_task_definition.ecs_task_go.arn}"
+  desired_count = 3
+  iam_role = "${aws_iam_role.ecs_alb.arn}"
+  depends_on = ["aws_iam_policy_attachment.ecs_alb"]
+  deployment_minimum_healthy_percent = 50
+
+  load_balancer {
+    target_group_arn = "${aws_alb_target_group.service_alb_go.arn}"
+    container_name = "${var.appname}_${var.environ}"
+    container_port = "${var.docker_port}"
   }
 }
 

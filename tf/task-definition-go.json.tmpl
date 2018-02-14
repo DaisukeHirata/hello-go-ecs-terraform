@@ -1,0 +1,22 @@
+[
+  {
+      "name": "${name}",
+      "image": "${image}",
+      "memory": 128,
+      "essential": true,
+      "portMappings": [
+          {
+              "containerPort": ${docker_port},
+              "hostPort": 0
+          }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "fr-app-log",
+          "awslogs-region": "ap-northeast-1",
+          "awslogs-stream-prefix": "fr-app-log"
+        }
+      }
+  }
+]

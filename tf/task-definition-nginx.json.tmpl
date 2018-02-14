@@ -1,0 +1,28 @@
+[
+  {
+      "name": "${nginx_name}",
+      "image": "${nginx_image}",
+      "memory": 128,
+      "essential": true,
+      "portMappings": [
+          {
+              "containerPort": ${nginx_docker_port},
+              "hostPort": 0
+          }
+      ],
+      "environment": [
+          {
+              "name": "GO_HOST",
+              "value": "${internal_alb_host}"
+          }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "fr-nginx-log",
+          "awslogs-region": "ap-northeast-1",
+          "awslogs-stream-prefix": "fr-nginx-log"
+        }
+      }
+  }
+]
